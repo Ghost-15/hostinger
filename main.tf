@@ -13,100 +13,14 @@ provider "kubernetes" {
 }
 
 # ════════════════════════════════════════════════════
-# MACHINE 1 — WORDPRESS MULTISITE
-# Réseau de sites WordPress (subdirectory mode)
-# MySQL partagé avec la machine 2
+# MYSQL — instance unique partagée par tous les WP
 # ════════════════════════════════════════════════════
-resource "kubernetes_persistent_volume_claim" "multisite_pvc" {
-  metadata { name = "multisite-pvc" }
-  spec {
-    access_modes = ["ReadWriteOnce"]
-    resources {
-      requests = { storage = "2Gi" }
-    }
-  }
+
+# Init SQL : crée toutes les bases/users déclarés dans les variables
+locals {
+  all_wp_instances = merge(var.wordpress_instances, var.multisite_instances)
 }
 
-resource "kubernetes_deployment" "multisite" {
-  metadata {
-    name   = "wp-multisite"
-    labels = { app = "multisite" }
-  }
-  spec {
-    replicas = 1
-    selector { match_labels = { app = "multisite" } }
-    template {
-      metadata { labels = { app = "multisite" } }
-      spec {
-        container {
-          name  = "wordpress"
-          image = "wordpress:php8.2-apache"
-          port  { container_port = 80 }
-
-          # ── Base MySQL dédiée au multisite ──
-          env {
-            name  = "WORDPRESS_DB_HOST"
-            value = "mysql-svc:3306"
-          }
-          env {
-            name  = "WORDPRESS_DB_NAME"
-            value = var.mysql_multisite_db
-          }
-          env {
-            name  = "WORDPRESS_DB_USER"
-            value = var.mysql_user
-          }
-          env {
-            name  = "WORDPRESS_DB_PASSWORD"
-            value = var.mysql_password
-          }
-
-          # ── Activation WordPress Multisite ──
-          # MULTISITE=true  → active define('MULTISITE', true)
-          # SUBDOMAIN_INSTALL=false → mode subdirectory (/site1, /site2...)
-          env {
-            name  = "WORDPRESS_CONFIG_EXTRA"
-            value = <<-EOT
-              define('WP_ALLOW_MULTISITE', true);
-              define('MULTISITE', true);
-              define('SUBDOMAIN_INSTALL', false);
-              define('DOMAIN_CURRENT_SITE', 'localhost');
-              define('PATH_CURRENT_SITE', '/');
-              define('SITE_ID_CURRENT_SITE', 1);
-              define('BLOG_ID_CURRENT_SITE', 1);
-              define('DB_HOST', 'mysql-svc:3306');
-            EOT
-          }
-
-          volume_mount {
-            name       = "multisite-data"
-            mount_path = "/var/www/html"
-          }
-        }
-        volume {
-          name = "multisite-data"
-          persistent_volume_claim { claim_name = "multisite-pvc" }
-        }
-      }
-    }
-  }
-}
-
-resource "kubernetes_service" "multisite" {
-  metadata { name = "multisite-svc" }
-  spec {
-    selector = { app = "multisite" }
-    port {
-      port        = 80
-      target_port = 80
-    }
-    type = "ClusterIP"
-  }
-}
-
-# ════════════════════════════════════════════════════
-# MACHINE 2 — MYSQL (base pour WordPress)
-# ════════════════════════════════════════════════════
 resource "kubernetes_secret" "mysql_secret" {
   metadata { name = "mysql-secret" }
   data = {
@@ -117,14 +31,12 @@ resource "kubernetes_secret" "mysql_secret" {
 resource "kubernetes_config_map" "mysql_init" {
   metadata { name = "mysql-init" }
   data = {
-    "init.sql" = <<-EOT
-      CREATE DATABASE IF NOT EXISTS `${var.mysql_db}`;
-      CREATE DATABASE IF NOT EXISTS `${var.mysql_multisite_db}`;
-      CREATE USER IF NOT EXISTS '${var.mysql_user}'@'%' IDENTIFIED BY '${var.mysql_password}';
-      GRANT ALL PRIVILEGES ON `${var.mysql_db}`.* TO '${var.mysql_user}'@'%';
-      GRANT ALL PRIVILEGES ON `${var.mysql_multisite_db}`.* TO '${var.mysql_user}'@'%';
-      FLUSH PRIVILEGES;
-    EOT
+    "init.sql" = join("\n", concat(
+      [for name, cfg in local.all_wp_instances :
+        "CREATE DATABASE IF NOT EXISTS `${cfg.db_name}`;\nCREATE USER IF NOT EXISTS '${cfg.db_user}'@'%' IDENTIFIED BY '${cfg.db_pass}';\nGRANT ALL PRIVILEGES ON `${cfg.db_name}`.* TO '${cfg.db_user}'@'%';"
+      ],
+      ["FLUSH PRIVILEGES;"]
+    ))
   }
 }
 
@@ -152,7 +64,7 @@ resource "kubernetes_deployment" "mysql" {
         container {
           name  = "mysql"
           image = "mysql:8.0"
-          port  { container_port = 3306 }
+          port { container_port = 3306 }
           env_from {
             secret_ref { name = "mysql-secret" }
           }
@@ -193,10 +105,13 @@ resource "kubernetes_service" "mysql" {
 }
 
 # ════════════════════════════════════════════════════
-# MACHINE 2 — WORDPRESS (avec MySQL)
+# WORDPRESS SITE UNIQUE — for_each sur wordpress_instances
 # ════════════════════════════════════════════════════
-resource "kubernetes_persistent_volume_claim" "wp_pvc" {
-  metadata { name = "wp-pvc" }
+
+resource "kubernetes_persistent_volume_claim" "wordpress" {
+  for_each = var.wordpress_instances
+
+  metadata { name = "${each.key}-pvc" }
   spec {
     access_modes = ["ReadWriteOnce"]
     resources {
@@ -206,21 +121,22 @@ resource "kubernetes_persistent_volume_claim" "wp_pvc" {
 }
 
 resource "kubernetes_deployment" "wordpress" {
+  for_each = var.wordpress_instances
+
   metadata {
-    name   = "wordpress"
-    labels = { app = "wordpress" }
+    name   = each.key
+    labels = { app = each.key }
   }
   spec {
     replicas = 1
-    selector { match_labels = { app = "wordpress" } }
+    selector { match_labels = { app = each.key } }
     template {
-      metadata { labels = { app = "wordpress" } }
+      metadata { labels = { app = each.key } }
       spec {
         container {
           name  = "wordpress"
-          # Image WordPress native avec support MySQL
           image = "wordpress:php8.2-apache"
-          port  { container_port = 80 }
+          port { container_port = 80 }
 
           env {
             name  = "WORDPRESS_DB_HOST"
@@ -228,15 +144,15 @@ resource "kubernetes_deployment" "wordpress" {
           }
           env {
             name  = "WORDPRESS_DB_NAME"
-            value = var.mysql_db
+            value = each.value.db_name
           }
           env {
             name  = "WORDPRESS_DB_USER"
-            value = var.mysql_user
+            value = each.value.db_user
           }
           env {
             name  = "WORDPRESS_DB_PASSWORD"
-            value = var.mysql_password
+            value = each.value.db_pass
           }
           env {
             name  = "WORDPRESS_CONFIG_EXTRA"
@@ -250,17 +166,21 @@ resource "kubernetes_deployment" "wordpress" {
         }
         volume {
           name = "wp-data"
-          persistent_volume_claim { claim_name = "wp-pvc" }
+          persistent_volume_claim { claim_name = "${each.key}-pvc" }
         }
       }
     }
   }
+
+  depends_on = [kubernetes_deployment.mysql]
 }
 
 resource "kubernetes_service" "wordpress" {
-  metadata { name = "wordpress-svc" }
+  for_each = var.wordpress_instances
+
+  metadata { name = "${each.key}-svc" }
   spec {
-    selector = { app = "wordpress" }
+    selector = { app = each.key }
     port {
       port        = 80
       target_port = 80
@@ -270,11 +190,107 @@ resource "kubernetes_service" "wordpress" {
 }
 
 # ════════════════════════════════════════════════════
-# MACHINE 3 — SERVEUR NODE.JS
+# WORDPRESS MULTISITE — for_each sur multisite_instances
 # ════════════════════════════════════════════════════
-resource "kubernetes_config_map" "nodejs_app" {
+
+resource "kubernetes_persistent_volume_claim" "multisite" {
+  for_each = var.multisite_instances
+
+  metadata { name = "${each.key}-pvc" }
+  spec {
+    access_modes = ["ReadWriteOnce"]
+    resources {
+      requests = { storage = "2Gi" }
+    }
+  }
+}
+
+resource "kubernetes_deployment" "multisite" {
+  for_each = var.multisite_instances
+
   metadata {
-    name      = "nodejs-app"
+    name   = each.key
+    labels = { app = each.key }
+  }
+  spec {
+    replicas = 1
+    selector { match_labels = { app = each.key } }
+    template {
+      metadata { labels = { app = each.key } }
+      spec {
+        container {
+          name  = "wordpress"
+          image = "wordpress:php8.2-apache"
+          port { container_port = 80 }
+
+          env {
+            name  = "WORDPRESS_DB_HOST"
+            value = "mysql-svc:3306"
+          }
+          env {
+            name  = "WORDPRESS_DB_NAME"
+            value = each.value.db_name
+          }
+          env {
+            name  = "WORDPRESS_DB_USER"
+            value = each.value.db_user
+          }
+          env {
+            name  = "WORDPRESS_DB_PASSWORD"
+            value = each.value.db_pass
+          }
+          env {
+            name  = "WORDPRESS_CONFIG_EXTRA"
+            value = <<-EOT
+              define('WP_ALLOW_MULTISITE', true);
+              define('MULTISITE', true);
+              define('SUBDOMAIN_INSTALL', false);
+              define('DOMAIN_CURRENT_SITE', 'localhost');
+              define('PATH_CURRENT_SITE', '/');
+              define('SITE_ID_CURRENT_SITE', 1);
+              define('BLOG_ID_CURRENT_SITE', 1);
+            EOT
+          }
+
+          volume_mount {
+            name       = "ms-data"
+            mount_path = "/var/www/html"
+          }
+        }
+        volume {
+          name = "ms-data"
+          persistent_volume_claim { claim_name = "${each.key}-pvc" }
+        }
+      }
+    }
+  }
+
+  depends_on = [kubernetes_deployment.mysql]
+}
+
+resource "kubernetes_service" "multisite" {
+  for_each = var.multisite_instances
+
+  metadata { name = "${each.key}-svc" }
+  spec {
+    selector = { app = each.key }
+    port {
+      port        = 80
+      target_port = 80
+    }
+    type = "ClusterIP"
+  }
+}
+
+# ════════════════════════════════════════════════════
+# NODE.JS — for_each sur nodejs_instances
+# ════════════════════════════════════════════════════
+
+resource "kubernetes_config_map" "nodejs_app" {
+  for_each = var.nodejs_instances
+
+  metadata {
+    name      = "${each.key}-code"
     namespace = "default"
   }
   data = {
@@ -285,33 +301,35 @@ resource "kubernetes_config_map" "nodejs_app" {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           status: 'OK',
-          service: 'Node.js Server',
+          service: '${each.key}',
           hostname: os.hostname(),
           timestamp: new Date().toISOString(),
           path: req.url
         }));
       });
-      server.listen(3000, () => console.log('Node.js running on port 3000'));
+      server.listen(3000, () => console.log('${each.key} running on port 3000'));
     EOT
   }
 }
 
 resource "kubernetes_deployment" "nodejs" {
+  for_each = var.nodejs_instances
+
   metadata {
-    name   = "nodejs-server"
-    labels = { app = "nodejs" }
+    name   = each.key
+    labels = { app = each.key }
   }
   spec {
     replicas = 1
-    selector { match_labels = { app = "nodejs" } }
+    selector { match_labels = { app = each.key } }
     template {
-      metadata { labels = { app = "nodejs" } }
+      metadata { labels = { app = each.key } }
       spec {
         container {
-          name  = "nodejs"
-          image = "node:20-alpine"
+          name    = "nodejs"
+          image   = "node:20-alpine"
           command = ["node", "/app/server.js"]
-          port  { container_port = 3000 }
+          port { container_port = 3000 }
           volume_mount {
             name       = "app-code"
             mount_path = "/app"
@@ -319,7 +337,7 @@ resource "kubernetes_deployment" "nodejs" {
         }
         volume {
           name = "app-code"
-          config_map { name = "nodejs-app" }
+          config_map { name = "${each.key}-code" }
         }
       }
     }
@@ -327,9 +345,11 @@ resource "kubernetes_deployment" "nodejs" {
 }
 
 resource "kubernetes_service" "nodejs" {
-  metadata { name = "nodejs-svc" }
+  for_each = var.nodejs_instances
+
+  metadata { name = "${each.key}-svc" }
   spec {
-    selector = { app = "nodejs" }
+    selector = { app = each.key }
     port {
       port        = 3000
       target_port = 3000
@@ -339,23 +359,26 @@ resource "kubernetes_service" "nodejs" {
 }
 
 # ════════════════════════════════════════════════════
-# MACHINE 4 — VPS DEBIAN (SSH accessible)
+# VPS DEBIAN SSH — for_each sur vps_instances
 # ════════════════════════════════════════════════════
-resource "kubernetes_deployment" "debian_vps" {
+
+resource "kubernetes_deployment" "vps" {
+  for_each = var.vps_instances
+
   metadata {
-    name   = "debian-vps"
-    labels = { app = "debian-vps" }
+    name   = each.key
+    labels = { app = each.key }
   }
   spec {
     replicas = 1
-    selector { match_labels = { app = "debian-vps" } }
+    selector { match_labels = { app = each.key } }
     template {
-      metadata { labels = { app = "debian-vps" } }
+      metadata { labels = { app = each.key } }
       spec {
-container {
+        container {
           name  = "debian"
           image = "lscr.io/linuxserver/openssh-server:latest"
-          port  { container_port = 2222 }
+          port { container_port = 2222 }
 
           env {
             name  = "PUID"
@@ -375,7 +398,7 @@ container {
           }
           env {
             name  = "USER_PASSWORD"
-            value = var.vps_root_password
+            value = each.value.password
           }
           env {
             name  = "SUDO_ACCESS"
@@ -387,10 +410,12 @@ container {
   }
 }
 
-resource "kubernetes_service" "debian_vps" {
-  metadata { name = "debian-vps-svc" }
+resource "kubernetes_service" "vps" {
+  for_each = var.vps_instances
+
+  metadata { name = "${each.key}-svc" }
   spec {
-    selector = { app = "debian-vps" }
+    selector = { app = each.key }
     port {
       port        = 2222
       target_port = 2222
