@@ -1,0 +1,42 @@
+mysql_root_password = "changeme"
+
+wordpress_instances = {
+  "wordpress-01" = {
+    db_name = "wp_db_01"
+    db_user = "wp_user_01"
+    db_pass = "wp_pass_01"
+    port    = 8081
+  }
+  # "wordpress-02" = {
+  #   db_name = "wp_db_02"
+  #   db_user = "wp_user_02"
+  #   db_pass = "wp_pass_02"
+  #   port    = 8083
+  # }
+}
+
+multisite_instances = {
+  "multisite-01" = {
+    db_name = "wp_multisite_01"
+    db_user = "ms_user_01"
+    db_pass = "ms_pass_01"
+    port    = 8080
+  }
+}
+
+nodejs_instances = {
+  "nodejs-01" = {
+    port = 8082
+  }
+}
+
+vps_instances = {
+  "vps-01" = {
+    password = "changeme"
+    ssh_port = 2222
+  }
+  # "vps-02" = {
+  #   password = "changeme"
+  #   ssh_port = 2223
+  # }
+}

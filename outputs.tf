@@ -1,30 +1,31 @@
-output "services" {
-  description = "Résumé des services déployés"
+output "wordpress_port_forwards" {
+  description = "Commandes port-forward pour les instances WordPress"
   value = {
-    wp_multisite = "http://localhost:8080       (WordPress Multisite — réseau de sites)"
-    wordpress    = "http://localhost:8081       (WordPress site unique + MySQL)"
-    nodejs       = "http://localhost:8082       (API Node.js)"
-    debian_vps   = "ssh root@localhost -p 2222  (VPS Debian SSH)"
+    for name, cfg in var.wordpress_instances :
+    name => "kubectl port-forward svc/${name}-svc ${cfg.port}:80"
   }
 }
 
-output "port_forward_commands" {
-  description = "Commandes port-forward à lancer dans des terminaux séparés"
+output "multisite_port_forwards" {
+  description = "Commandes port-forward pour les instances WordPress Multisite"
   value = {
-    "1_wp_multisite" = "kubectl port-forward svc/multisite-svc   8080:80"
-    "2_wordpress"    = "kubectl port-forward svc/wordpress-svc   8081:80"
-    "3_nodejs"       = "kubectl port-forward svc/nodejs-svc      8082:3000"
-    "4_debian_ssh"   = "kubectl port-forward svc/debian-vps-svc  2222:22"
+    for name, cfg in var.multisite_instances :
+    name => "kubectl port-forward svc/${name}-svc ${cfg.port}:80"
   }
 }
 
-output "wp_multisite_setup" {
-  description = "Étapes pour finaliser le WordPress Multisite"
-  value = <<-EOT
-    1. Ouvrir http://localhost:8080/wp-admin
-    2. Aller dans Outils > Configuration du réseau
-    3. Choisir "Sous-répertoires" (subdirectory)
-    4. Suivre les instructions pour activer le réseau
-    5. Ajouter des sites via Mes Sites > Administration réseau > Sites
-  EOT
+output "nodejs_port_forwards" {
+  description = "Commandes port-forward pour les instances Node.js"
+  value = {
+    for name, cfg in var.nodejs_instances :
+    name => "kubectl port-forward svc/${name}-svc ${cfg.port}:3000"
+  }
+}
+
+output "vps_port_forwards" {
+  description = "Commandes port-forward pour les instances VPS Debian"
+  value = {
+    for name, cfg in var.vps_instances :
+    name => "kubectl port-forward svc/${name}-svc ${cfg.ssh_port}:2222  # ssh admin@localhost -p ${cfg.ssh_port}"
+  }
 }

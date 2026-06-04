@@ -1,38 +1,52 @@
-variable "mysql_db" {
-  description = "Nom de la base MySQL pour WordPress (site unique)"
-  type        = string
-  default     = "wordpress_db"
-}
-
-variable "mysql_multisite_db" {
-  description = "Nom de la base MySQL pour WordPress Multisite"
-  type        = string
-  default     = "wordpress_multisite_db"
-}
-
-variable "mysql_user" {
-  description = "Utilisateur MySQL"
-  type        = string
-  default     = "wp_user"
-}
-
-variable "mysql_password" {
-  description = "Mot de passe MySQL"
-  type        = string
-  default     = "wp_secret_pass"
-  sensitive   = true
-}
-
 variable "mysql_root_password" {
   description = "Mot de passe root MySQL"
   type        = string
-  default     = "mysql_root_pass"
   sensitive   = true
 }
 
-variable "vps_root_password" {
-  description = "Mot de passe root du VPS Debian"
-  type        = string
-  default     = "debian_root_pass"
-  sensitive   = true
+# ─────────────────────────────────────────────
+# Instances WordPress (site unique)
+# ─────────────────────────────────────────────
+variable "wordpress_instances" {
+  description = "Map des instances WordPress. Clé = nom de l'instance."
+  type = map(object({
+    db_name = string
+    db_user = string
+    db_pass = string
+    port    = number
+  }))
+}
+
+# ─────────────────────────────────────────────
+# Instances WordPress Multisite
+# ─────────────────────────────────────────────
+variable "multisite_instances" {
+  description = "Map des instances WordPress Multisite. Clé = nom de l'instance."
+  type = map(object({
+    db_name = string
+    db_user = string
+    db_pass = string
+    port    = number
+  }))
+}
+
+# ─────────────────────────────────────────────
+# Instances Node.js
+# ─────────────────────────────────────────────
+variable "nodejs_instances" {
+  description = "Map des instances Node.js. Clé = nom de l'instance."
+  type = map(object({
+    port = number
+  }))
+}
+
+# ─────────────────────────────────────────────
+# Instances VPS Debian SSH
+# ─────────────────────────────────────────────
+variable "vps_instances" {
+  description = "Map des instances VPS Debian SSH. Clé = nom de l'instance."
+  type = map(object({
+    password = string
+    ssh_port = number
+  }))
 }
