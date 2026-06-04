@@ -1,104 +1,200 @@
-# 🏠 Local Hosting — Terraform + Kubernetes (kind)
+# Local Hosting — Terraform + Kubernetes (kind)
 
 Provider local simulant un hébergeur avec 4 machines.
 
-## 📦 Architecture
+## Architecture
 
 ```
 kind cluster (hosting-local)
 ├── Machine 1 → WordPress Multisite  (réseau de sites WP) → :8080
 ├── Machine 2 → WordPress            (site unique + MySQL) → :8081
-│              MySQL                 (base partagée)
-├── Machine 3 → Node.js              (API serveur)        → :8082
-└── Machine 4 → Debian VPS           (SSH accessible)     → :2222
+│              MySQL                 (base partagée)       → :3306
+├── Machine 3 → Node.js              (API serveur)         → :8082
+└── Machine 4 → Debian VPS           (SSH accessible)      → :2222
 ```
+
+Un mot de passe unique est généré aléatoirement à chaque `terraform apply` et partagé par tous les services. Il est automatiquement envoyé et affiché sur un écran OLED connecté à un ESP32.
 
 ---
 
-## 🛠️ Prérequis
+## Prérequis
+
+### Windows
 
 ```powershell
-# Docker Desktop (requis pour kind)
-# Télécharger : https://www.docker.com/products/docker-desktop
-
 winget install Kubernetes.kind
 winget install Kubernetes.kubectl
-terraform --version  # déjà installé
+winget install Hashicorp.Terraform
+pip install pyserial
+```
+
+Docker Desktop est requis : https://www.docker.com/products/docker-desktop
+
+### macOS
+
+```bash
+brew install kind kubectl terraform
+pip3 install pyserial
+```
+
+Docker Desktop est requis : https://www.docker.com/products/docker-desktop
+
+### Linux (Debian/Ubuntu)
+
+```bash
+# kind
+curl -Lo /usr/local/bin/kind https://kind.sigs.k8s.io/dl/v0.23.0/kind-linux-amd64
+chmod +x /usr/local/bin/kind
+
+# kubectl
+curl -LO "https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+
+# terraform
+wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor | sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+sudo apt update && sudo apt install -y terraform
+
+# pyserial
+pip3 install pyserial
+
+# Docker Engine
+sudo apt install -y docker.io
+sudo usermod -aG docker $USER  # puis se reconnecter
 ```
 
 ---
 
-## 🚀 Déploiement complet
+## Déploiement complet
 
 ### Étape 1 — Créer le cluster kind
 
-```powershell
+```bash
 kind create cluster --name hosting-local --image kindest/node:v1.34.0
-kubectl config current-context
-
-Vérifier l'état du cluster :
 kubectl cluster-info --context kind-hosting-local
 kubectl get nodes
-
-Vérifier les pods système :
-kubectl get pods -A
-
-# → kind-hosting-local
 ```
 
-### Étape 2 — Déployer avec Terraform
+### Étape 2 — Déployer avec Terraform + envoyer le mdp sur l'ESP32
+
+Trouver d'abord le port série de l'ESP32 :
+
+| OS      | Commande                          | Exemple de port              |
+|---------|-----------------------------------|------------------------------|
+| Windows | `Get-PnpDevice -Class Ports`      | `COM3`                       |
+| macOS   | `ls /dev/cu.usb*`                 | `/dev/cu.usbserial-0001`     |
+| Linux   | `ls /dev/ttyUSB* /dev/ttyACM*`    | `/dev/ttyUSB0`               |
+
+> **Linux uniquement** — accès au port série sans sudo :
+> ```bash
+> sudo usermod -aG dialout $USER  # puis se reconnecter
+> ```
+
+**Déploiement en une commande :**
+
+```bash
+# macOS / Linux
+./deploy.sh /dev/ttyUSB0               # Linux
+./deploy.sh /dev/cu.usbserial-0001     # macOS
+./deploy.sh                            # détection automatique
+```
 
 ```powershell
-cd terraform-local-hosting
+# Windows
+bash deploy.sh COM3                    # Git Bash / WSL
+```
+
+**Ou manuellement :**
+
+```bash
 terraform init
 terraform apply
-# Taper "yes"
+
+# macOS / Linux
+python3 esp32_send_password.py --port /dev/ttyUSB0
+
+# Windows
+python esp32_send_password.py --port COM3
 ```
+
+Le mot de passe généré s'affiche automatiquement sur l'écran de l'ESP32 dès que le déploiement est terminé.
 
 ### Étape 3 — Lancer les port-forwards
 
-```powershell
-.\port-forward.ps1 ou Get-Content .\port-forward.ps1
-```
+Dans 4 terminaux séparés :
 
-Ou manuellement dans 4 terminaux :
-
-```powershell
-kubectl port-forward svc/multisite-svc   8080:80    # WP Multisite
-kubectl port-forward svc/wordpress-svc   8081:80    # WP classique
-kubectl port-forward svc/nodejs-svc      8082:3000  # Node.js
-kubectl port-forward svc/debian-vps-svc  2222:22    # SSH
+```bash
+kubectl port-forward svc/multisite-svc   8080:80     # WP Multisite
+kubectl port-forward svc/wordpress-svc   8081:80     # WP classique
+kubectl port-forward svc/nodejs-svc      8082:3000   # Node.js
+kubectl port-forward svc/debian-vps-svc  2222:2222   # SSH
 ```
 
 ---
 
-## 🌐 Accès aux services
+## Accès aux services
 
-| Service              | URL / Commande                       |
-|----------------------|--------------------------------------|
-| WordPress Multisite  | http://localhost:8080                |
-| WordPress classique  | http://localhost:8081                |
-| Node.js API          | http://localhost:8082                |
-| Debian VPS SSH       | `ssh root@localhost -p 2222`         |
+| Service             | URL / Commande                  | User      |
+|---------------------|---------------------------------|-----------|
+| WordPress Multisite | http://localhost:8080           | wp_user   |
+| WordPress classique | http://localhost:8081           | wp_user   |
+| Node.js API         | http://localhost:8082           | —         |
+| Debian VPS SSH      | `ssh admin@localhost -p 2222`   | admin     |
+| MySQL               | localhost:3306                  | wp_user   |
 
-Mot de passe SSH : `debian_root_pass`
+Le mot de passe est affiché sur l'écran OLED de l'ESP32. Il change à chaque `terraform apply`.
+
+Pour l'afficher aussi dans le terminal :
+
+```bash
+terraform output shared_password
+```
 
 ---
 
-## 🌐 Configurer WordPress Multisite
+## ESP32 — Affichage du mot de passe
 
-Le Multisite WordPress est activé via `wp-config.php` automatiquement.
-Après le premier démarrage :
+Un ESP32 avec un écran OLED SSD1306 (128x64) affiche le mot de passe en temps réel après chaque déploiement.
+
+### Câblage
+
+| OLED SSD1306 | ESP32  |
+|--------------|--------|
+| SDA          | GPIO 8 |
+| SCL          | GPIO 3 |
+| VCC          | 3.3V   |
+| GND          | GND    |
+
+### Sketch Arduino
+
+Charger [`esp32_display/esp32_display.ino`](esp32_display/esp32_display.ino) via Arduino IDE.
+
+Librairies requises (Gestionnaire de bibliothèques) :
+- `Adafruit SSD1306`
+- `Adafruit GFX Library`
+
+### Comportement de l'écran
+
+L'écran affiche en permanence le mot de passe en haut, puis fait défiler les 5 services toutes les 3 secondes :
+
+```
+MDP: aB3!xZ9k#mQpLf
+──────────────────
+WP Multisite
+user: wp_user
+port: :8080
+1/5 [████░░░░░░]
+```
+
+---
+
+## Configurer WordPress Multisite
 
 1. Aller sur **http://localhost:8080/wp-admin**
-2. Installer WordPress normalement (admin/mot de passe)
+2. Installer WordPress (user : `wp_user`, mdp : voir écran ESP32)
 3. Aller dans **Outils > Configuration du réseau**
 4. Choisir **"Sous-répertoires"** (mode subdirectory)
 5. Cliquer **Installer**
-6. WordPress affiche 2 blocs de code à coller dans `wp-config.php` et `.htaccess`
-
-Ajouter des sous-sites via :
-**Mes Sites > Administration réseau > Sites > Ajouter**
 
 Exemples de sites du réseau :
 - `http://localhost:8080/` → site principal
@@ -107,38 +203,23 @@ Exemples de sites du réseau :
 
 ---
 
-## ⚙️ WordPress + MySQL
+## Commandes utiles
 
-Les deux WordPress (Multisite + classique) utilisent MySQL. Les bases `wordpress_db` et `wordpress_multisite_db` sont créées automatiquement au premier démarrage du serveur MySQL.
-
-Après le premier démarrage d'un pod WordPress :
-
-```powershell
-# Multisite
-kubectl exec -it deployment/wp-multisite -- bash
-
-# Classique
-kubectl exec -it deployment/wordpress -- bash
-```
-
----
-
-## 🔍 Commandes utiles
-
-```powershell
+```bash
 kubectl get pods
 kubectl get services
 kubectl logs deployment/wp-multisite
 kubectl logs deployment/wordpress
 kubectl logs deployment/mysql
+kubectl logs deployment/nodejs-server
 kubectl exec -it deployment/debian-vps -- bash
 ```
 
 ---
 
-## 🧹 Tout supprimer
+## Tout supprimer
 
-```powershell
+```bash
 terraform destroy
 kind delete cluster --name hosting-local
 ```

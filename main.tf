@@ -4,7 +4,18 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = "~> 2.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
+}
+
+# Mot de passe unique généré à chaque déploiement — partagé par tous les services
+resource "random_password" "shared_password" {
+  length           = 16
+  special          = true
+  override_special = "!#$%&*?"
 }
 
 provider "kubernetes" {
@@ -43,7 +54,6 @@ resource "kubernetes_deployment" "multisite" {
           image = "wordpress:php8.2-apache"
           port  { container_port = 80 }
 
-          # ── Base MySQL dédiée au multisite ──
           env {
             name  = "WORDPRESS_DB_HOST"
             value = "mysql-svc:3306"
@@ -58,12 +68,8 @@ resource "kubernetes_deployment" "multisite" {
           }
           env {
             name  = "WORDPRESS_DB_PASSWORD"
-            value = var.mysql_password
+            value = random_password.shared_password.result
           }
-
-          # ── Activation WordPress Multisite ──
-          # MULTISITE=true  → active define('MULTISITE', true)
-          # SUBDOMAIN_INSTALL=false → mode subdirectory (/site1, /site2...)
           env {
             name  = "WORDPRESS_CONFIG_EXTRA"
             value = <<-EOT
@@ -110,7 +116,7 @@ resource "kubernetes_service" "multisite" {
 resource "kubernetes_secret" "mysql_secret" {
   metadata { name = "mysql-secret" }
   data = {
-    MYSQL_ROOT_PASSWORD = base64encode(var.mysql_root_password)
+    MYSQL_ROOT_PASSWORD = base64encode(random_password.shared_password.result)
   }
 }
 
@@ -120,7 +126,7 @@ resource "kubernetes_config_map" "mysql_init" {
     "init.sql" = <<-EOT
       CREATE DATABASE IF NOT EXISTS `${var.mysql_db}`;
       CREATE DATABASE IF NOT EXISTS `${var.mysql_multisite_db}`;
-      CREATE USER IF NOT EXISTS '${var.mysql_user}'@'%' IDENTIFIED BY '${var.mysql_password}';
+      CREATE USER IF NOT EXISTS '${var.mysql_user}'@'%' IDENTIFIED BY '${random_password.shared_password.result}';
       GRANT ALL PRIVILEGES ON `${var.mysql_db}`.* TO '${var.mysql_user}'@'%';
       GRANT ALL PRIVILEGES ON `${var.mysql_multisite_db}`.* TO '${var.mysql_user}'@'%';
       FLUSH PRIVILEGES;
@@ -218,7 +224,6 @@ resource "kubernetes_deployment" "wordpress" {
       spec {
         container {
           name  = "wordpress"
-          # Image WordPress native avec support MySQL
           image = "wordpress:php8.2-apache"
           port  { container_port = 80 }
 
@@ -236,7 +241,7 @@ resource "kubernetes_deployment" "wordpress" {
           }
           env {
             name  = "WORDPRESS_DB_PASSWORD"
-            value = var.mysql_password
+            value = random_password.shared_password.result
           }
           env {
             name  = "WORDPRESS_CONFIG_EXTRA"
@@ -352,7 +357,7 @@ resource "kubernetes_deployment" "debian_vps" {
     template {
       metadata { labels = { app = "debian-vps" } }
       spec {
-container {
+        container {
           name  = "debian"
           image = "lscr.io/linuxserver/openssh-server:latest"
           port  { container_port = 2222 }
@@ -375,7 +380,7 @@ container {
           }
           env {
             name  = "USER_PASSWORD"
-            value = var.vps_root_password
+            value = random_password.shared_password.result
           }
           env {
             name  = "SUDO_ACCESS"
