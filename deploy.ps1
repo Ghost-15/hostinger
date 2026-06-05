@@ -48,37 +48,23 @@ function Get-PythonLauncher {
 }
 
 function Start-PortForwards {
+    $services = @(
+        @{ Name = 'WP Multisite'; Command = 'kubectl port-forward svc/multisite-svc 8080:80' },
+        @{ Name = 'WordPress';    Command = 'kubectl port-forward svc/wordpress-svc 8081:80' },
+        @{ Name = 'NodeJS';       Command = 'kubectl port-forward svc/nodejs-svc 8082:3000' },
+        @{ Name = 'Debian SSH';   Command = 'kubectl port-forward svc/debian-vps-svc 2222:2222' }
+    )
+
     Write-Host ""
     Write-Host "=== Lancement des port-forwards ===" -ForegroundColor Cyan
 
-    # Récupère les commandes port-forward dynamiquement depuis les outputs Terraform
-    $outputNames = @('wordpress_port_forwards', 'multisite_port_forwards', 'nodejs_port_forwards', 'vps_port_forwards')
-    $commands = @()
-
-    foreach ($outputName in $outputNames) {
-        try {
-            $json = terraform output -json $outputName 2>$null | ConvertFrom-Json
-            foreach ($prop in $json.PSObject.Properties) {
-                # Garde uniquement la partie avant le # (commentaire)
-                $cmd = $prop.Value -split '#' | Select-Object -First 1
-                $cmd = $cmd.Trim()
-                $label = $prop.Name
-                $commands += @{ Name = $label; Command = $cmd }
-            }
-        } catch { }
-    }
-
-    if ($commands.Count -eq 0) {
-        Write-Host "Aucune commande port-forward trouvée dans les outputs Terraform." -ForegroundColor Yellow
-        return
-    }
-
-    foreach ($service in $commands) {
+    foreach ($service in $services) {
         $windowCommand = @"
-Write-Host '=== Port-forward : $($service.Name) ===' -ForegroundColor Green
-Write-Host 'Commande : $($service.Command)' -ForegroundColor Yellow
+Write-Host '=== Port-forward $($service.Name) ===' -ForegroundColor Green
+Write-Host 'Commande: $($service.Command)' -ForegroundColor Yellow
 $($service.Command)
 "@
+
         Start-Process -FilePath powershell -ArgumentList @(
             '-NoExit',
             '-ExecutionPolicy', 'Bypass',
@@ -87,7 +73,7 @@ $($service.Command)
         ) | Out-Null
     }
 
-    Write-Host "$($commands.Count) fenêtre(s) de port-forward ouvertes." -ForegroundColor Green
+    Write-Host '4 fenêtres de port-forward ont été ouvertes.' -ForegroundColor Green
 }
 
 Write-Host "=== Initialisation Terraform ===" -ForegroundColor Cyan
@@ -120,12 +106,4 @@ Invoke-NativeCommand -Command $python.Command -Arguments $pythonArgs
 Write-Host ""
 Write-Host "=== Déploiement terminé ===" -ForegroundColor Green
 Write-Host "Le mot de passe SSH est affiché sur l'écran de l'ESP32."
-Write-Host ""
-Write-Host "Connexions SSH disponibles :" -ForegroundColor Cyan
-try {
-    $vpsOutputs = terraform output -json vps_port_forwards 2>$null | ConvertFrom-Json
-    foreach ($prop in $vpsOutputs.PSObject.Properties) {
-        $sshInfo = ($prop.Value -split '#' | Select-Object -Last 1).Trim()
-        Write-Host "  $($prop.Name) -> $sshInfo" -ForegroundColor Yellow
-    }
-} catch { }
+Write-Host "Connexion: ssh admin@localhost -p 2222"
