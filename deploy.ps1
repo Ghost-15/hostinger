@@ -3,7 +3,9 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Ip,
 
-    [int]$EspPort = 80
+    [int]$EspPort = 80,
+
+    [switch]$FailOnEsp32Error
 )
 
 $ErrorActionPreference = 'Stop'
@@ -86,7 +88,18 @@ Write-Host "=== Envoi du mot de passe sur l'ESP32 ($Ip) ===" -ForegroundColor Cy
 $python     = Get-PythonLauncher
 $pythonArgs = $python.Arguments + @('esp32_send_password.py', '--ip', $Ip, '--port', "$EspPort")
 
-Invoke-NativeCommand -Command $python.Command -Arguments $pythonArgs
+try {
+    Invoke-NativeCommand -Command $python.Command -Arguments $pythonArgs
+    Write-Host "Envoi ESP32 réussi." -ForegroundColor Green
+}
+catch {
+    if ($FailOnEsp32Error) {
+        throw
+    }
+
+    Write-Host "Avertissement: échec de l'envoi vers l'ESP32, mais le déploiement continue." -ForegroundColor Yellow
+    Write-Host "Détail: $($_.Exception.Message)" -ForegroundColor DarkYellow
+}
 
 # ── Résumé ─────────────────────────────────────────────────────────────────────
 Write-Host ""
