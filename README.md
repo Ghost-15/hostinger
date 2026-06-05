@@ -114,8 +114,10 @@ terraform apply
 python3 esp32_send_password.py --port /dev/ttyUSB0
 
 # Windows
-python esp32_send_password.py --port COM3
+python esp32_send_password.py --port COM4
 ```
+
+Remplace `COM3` par le vrai port de l'ESP32. Si le port indiqué n'existe pas, le script prend automatiquement un port série disponible.
 
 Le mot de passe généré s'affiche automatiquement sur l'écran de l'ESP32 dès que le déploiement est terminé.
 
