@@ -81,7 +81,7 @@ Trouver d'abord le port série de l'ESP32 :
 
 | OS      | Commande                          | Exemple de port              |
 |---------|-----------------------------------|------------------------------|
-| Windows | `Get-PnpDevice -Class Ports`      | `COM3`                       |
+| Windows | `Get-PnpDevice -Class Ports`      | `COM4`                       |
 | macOS   | `ls /dev/cu.usb*`                 | `/dev/cu.usbserial-0001`     |
 | Linux   | `ls /dev/ttyUSB* /dev/ttyACM*`    | `/dev/ttyUSB0`               |
 
@@ -101,8 +101,10 @@ Trouver d'abord le port série de l'ESP32 :
 
 ```powershell
 # Windows
-bash deploy.sh COM3                    # Git Bash / WSL
+.\deploy.ps1 -Port COM4
 ```
+
+Si tu ne passes pas `-Port`, le script PowerShell envoie quand même le mot de passe à l'ESP32 en s'appuyant sur la détection automatique du script Python.
 
 **Ou manuellement :**
 
@@ -117,7 +119,7 @@ python3 esp32_send_password.py --port /dev/ttyUSB0
 python esp32_send_password.py --port COM4
 ```
 
-Remplace `COM3` par le vrai port de l'ESP32. Si le port indiqué n'existe pas, le script prend automatiquement un port série disponible.
+Remplace `COM4` par le vrai port de l'ESP32. Si le port indiqué n'existe pas, le script prend automatiquement un port série disponible.
 
 Le mot de passe généré s'affiche automatiquement sur l'écran de l'ESP32 dès que le déploiement est terminé.
 

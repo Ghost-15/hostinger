@@ -7,7 +7,7 @@ $services = @(
     @{ Name = "WP Multisite"; Cmd = "kubectl port-forward svc/multisite-svc 8080:80" },
     @{ Name = "WordPress";    Cmd = "kubectl port-forward svc/wordpress-svc 8081:80" },
     @{ Name = "NodeJS";       Cmd = "kubectl port-forward svc/nodejs-svc 8082:3000" },
-    @{ Name = "Debian SSH";   Cmd = "kubectl port-forward svc/debian-vps-svc 2222:22" }
+    @{ Name = "Debian SSH";   Cmd = "kubectl port-forward svc/debian-vps-svc 2222:2222" }
 )
 
 foreach ($svc in $services) {
