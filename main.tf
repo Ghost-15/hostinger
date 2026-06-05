@@ -4,7 +4,18 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = "~> 2.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
+}
+
+# Mot de passe unique généré à chaque déploiement — partagé par tous les services
+resource "random_password" "shared_password" {
+  length           = 16
+  special          = true
+  override_special = "!#$%&*?"
 }
 
 provider "kubernetes" {
@@ -16,27 +27,84 @@ provider "kubernetes" {
 # MYSQL — instance unique partagée par tous les WP
 # ════════════════════════════════════════════════════
 
-# Init SQL : crée toutes les bases/users déclarés dans les variables
-locals {
-  all_wp_instances = merge(var.wordpress_instances, var.multisite_instances)
+resource "kubernetes_deployment" "multisite" {
+  metadata {
+    name   = "wp-multisite"
+    labels = { app = "multisite" }
+  }
+  spec {
+    replicas = 1
+    selector { match_labels = { app = "multisite" } }
+    template {
+      metadata { labels = { app = "multisite" } }
+      spec {
+        container {
+          name  = "wordpress"
+          image = "wordpress:php8.2-apache"
+          port  { container_port = 80 }
+
+          env {
+            name  = "WORDPRESS_DB_HOST"
+            value = "mysql-svc:3306"
+          }
+          env {
+            name  = "WORDPRESS_DB_NAME"
+            value = var.mysql_multisite_db
+          }
+          env {
+            name  = "WORDPRESS_DB_USER"
+            value = var.mysql_user
+          }
+          env {
+            name  = "WORDPRESS_DB_PASSWORD"
+            value = random_password.shared_password.result
+          }
+          env {
+            name  = "WORDPRESS_CONFIG_EXTRA"
+            value = <<-EOT
+              define('WP_ALLOW_MULTISITE', true);
+              define('MULTISITE', true);
+              define('SUBDOMAIN_INSTALL', false);
+              define('DOMAIN_CURRENT_SITE', 'localhost');
+              define('PATH_CURRENT_SITE', '/');
+              define('SITE_ID_CURRENT_SITE', 1);
+              define('BLOG_ID_CURRENT_SITE', 1);
+              define('DB_HOST', 'mysql-svc:3306');
+            EOT
+          }
+
+          volume_mount {
+            name       = "multisite-data"
+            mount_path = "/var/www/html"
+          }
+        }
+        volume {
+          name = "multisite-data"
+          persistent_volume_claim { claim_name = "multisite-pvc" }
+        }
+      }
+    }
+  }
 }
 
 resource "kubernetes_secret" "mysql_secret" {
   metadata { name = "mysql-secret" }
   data = {
-    MYSQL_ROOT_PASSWORD = base64encode(var.mysql_root_password)
+    MYSQL_ROOT_PASSWORD = base64encode(random_password.shared_password.result)
   }
 }
 
 resource "kubernetes_config_map" "mysql_init" {
   metadata { name = "mysql-init" }
   data = {
-    "init.sql" = join("\n", concat(
-      [for name, cfg in local.all_wp_instances :
-        "CREATE DATABASE IF NOT EXISTS `${cfg.db_name}`;\nCREATE USER IF NOT EXISTS '${cfg.db_user}'@'%' IDENTIFIED BY '${cfg.db_pass}';\nGRANT ALL PRIVILEGES ON `${cfg.db_name}`.* TO '${cfg.db_user}'@'%';"
-      ],
-      ["FLUSH PRIVILEGES;"]
-    ))
+    "init.sql" = <<-EOT
+      CREATE DATABASE IF NOT EXISTS `${var.mysql_db}`;
+      CREATE DATABASE IF NOT EXISTS `${var.mysql_multisite_db}`;
+      CREATE USER IF NOT EXISTS '${var.mysql_user}'@'%' IDENTIFIED BY '${random_password.shared_password.result}';
+      GRANT ALL PRIVILEGES ON `${var.mysql_db}`.* TO '${var.mysql_user}'@'%';
+      GRANT ALL PRIVILEGES ON `${var.mysql_multisite_db}`.* TO '${var.mysql_user}'@'%';
+      FLUSH PRIVILEGES;
+    EOT
   }
 }
 
@@ -152,7 +220,7 @@ resource "kubernetes_deployment" "wordpress" {
           }
           env {
             name  = "WORDPRESS_DB_PASSWORD"
-            value = each.value.db_pass
+            value = random_password.shared_password.result
           }
           env {
             name  = "WORDPRESS_CONFIG_EXTRA"
@@ -398,7 +466,7 @@ resource "kubernetes_deployment" "vps" {
           }
           env {
             name  = "USER_PASSWORD"
-            value = each.value.password
+            value = random_password.shared_password.result
           }
           env {
             name  = "SUDO_ACCESS"

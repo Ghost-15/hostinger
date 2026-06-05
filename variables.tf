@@ -17,36 +17,8 @@ variable "wordpress_instances" {
   }))
 }
 
-# ─────────────────────────────────────────────
-# Instances WordPress Multisite
-# ─────────────────────────────────────────────
-variable "multisite_instances" {
-  description = "Map des instances WordPress Multisite. Clé = nom de l'instance."
-  type = map(object({
-    db_name = string
-    db_user = string
-    db_pass = string
-    port    = number
-  }))
-}
-
-# ─────────────────────────────────────────────
-# Instances Node.js
-# ─────────────────────────────────────────────
-variable "nodejs_instances" {
-  description = "Map des instances Node.js. Clé = nom de l'instance."
-  type = map(object({
-    port = number
-  }))
-}
-
-# ─────────────────────────────────────────────
-# Instances VPS Debian SSH
-# ─────────────────────────────────────────────
-variable "vps_instances" {
-  description = "Map des instances VPS Debian SSH. Clé = nom de l'instance."
-  type = map(object({
-    password = string
-    ssh_port = number
-  }))
+variable "mysql_user" {
+  description = "Utilisateur MySQL partagé"
+  type        = string
+  default     = "wp_user"
 }
