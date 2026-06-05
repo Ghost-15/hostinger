@@ -41,18 +41,14 @@ function Start-PortForwards {
     Write-Host ""
     Write-Host "=== Lancement des port-forwards ===" -ForegroundColor Cyan
 
-    $outputNames = @('wordpress_port_forwards', 'multisite_port_forwards', 'nodejs_port_forwards', 'vps_port_forwards')
     $commands = @()
-
-    foreach ($outputName in $outputNames) {
-        try {
-            $json = terraform output -json $outputName 2>$null | ConvertFrom-Json
-            foreach ($prop in $json.PSObject.Properties) {
-                $cmd   = ($prop.Value -split '#' | Select-Object -First 1).Trim()
-                $commands += @{ Name = $prop.Name; Command = $cmd }
-            }
-        } catch { }
-    }
+    try {
+        $json = terraform output -json port_forward_commands 2>$null | ConvertFrom-Json
+        foreach ($prop in $json.PSObject.Properties) {
+            $cmd = $prop.Value.Trim()
+            $commands += @{ Name = $prop.Name; Command = $cmd }
+        }
+    } catch { }
 
     if ($commands.Count -eq 0) {
         Write-Host "Aucune commande port-forward trouvée dans les outputs Terraform." -ForegroundColor Yellow
@@ -99,9 +95,10 @@ Write-Host "Le mot de passe est affiché sur l'écran de l'ESP32."
 Write-Host ""
 Write-Host "Connexions SSH disponibles :" -ForegroundColor Cyan
 try {
-    $vpsOutputs = terraform output -json vps_port_forwards 2>$null | ConvertFrom-Json
-    foreach ($prop in $vpsOutputs.PSObject.Properties) {
-        $sshInfo = ($prop.Value -split '#' | Select-Object -Last 1).Trim()
-        Write-Host "  $($prop.Name) -> $sshInfo" -ForegroundColor Yellow
+    $servicesOutput = terraform output -json services 2>$null | ConvertFrom-Json
+    foreach ($prop in $servicesOutput.PSObject.Properties) {
+        if ($prop.Value -match 'ssh|vps') {
+            Write-Host "  $($prop.Name) -> $($prop.Value)" -ForegroundColor Yellow
+        }
     }
 } catch { }

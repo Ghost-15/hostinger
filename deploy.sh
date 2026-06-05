@@ -55,15 +55,13 @@ FORWARD_CMDS=()
 while IFS= read -r line; do
   [ -n "$line" ] && FORWARD_CMDS+=("$line")
 done < <(
-  for OUTPUT in wordpress_port_forwards multisite_port_forwards nodejs_port_forwards vps_port_forwards; do
-    terraform output -json "$OUTPUT" 2>/dev/null \
-      | $PYTHON -c "
+  terraform output -json port_forward_commands 2>/dev/null \
+    | $PYTHON -c "
 import sys, re
 data = sys.stdin.read()
 for cmd in re.findall(r'\"(kubectl port-forward [^\"]+)\"', data):
-    print(cmd)
+    print(cmd.strip())
 "
-  done
 )
 
 if [ ${#FORWARD_CMDS[@]} -eq 0 ]; then
@@ -100,15 +98,15 @@ echo "=== Déploiement terminé ==="
 echo "Le mot de passe est affiché sur l'écran de l'ESP32."
 echo ""
 echo "Connexions SSH disponibles :"
-terraform output -json vps_port_forwards 2>/dev/null \
+terraform output -json services 2>/dev/null \
   | $PYTHON -c "
 import sys, json
 raw = sys.stdin.read().strip()
 if not raw:
-    print('  (aucune instance VPS trouvée)')
+    print('  (aucun service trouvé)')
     sys.exit(0)
 data = json.loads(raw)
-for name, cmd in data.items():
-    port = cmd.split('#')[1].strip() if '#' in cmd else cmd
-    print('  ' + name + ' -> ' + port)
+for name, info in data.items():
+    if 'ssh' in info.lower() or 'vps' in name.lower():
+        print('  ' + name + ' -> ' + info)
 " || true
