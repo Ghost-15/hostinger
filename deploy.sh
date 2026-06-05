@@ -1,24 +1,30 @@
 #!/bin/bash
-# Deploy complet : terraform apply + port-forwards dynamiques + envoi mdp sur ESP32
+# Deploy complet : terraform apply + port-forwards dynamiques + envoi mdp sur ESP32 via IP
 # Usage:
-#   ./deploy.sh                              # détection automatique du port ESP32
-#   ./deploy.sh --port /dev/cu.usbserial-0001
-#   ./deploy.sh --port /dev/ttyUSB0 --baud 115200
+#   ./deploy.sh --ip 192.168.1.42
+#   ./deploy.sh --ip 192.168.1.42 --esp-port 80
 set -e
 
 cd "$(dirname "$0")"
 
 # ── Arguments ─────────────────────────────────────────────────────────────────
-ESP32_PORT=""
-BAUD=115200
+ESP32_IP=""
+ESP32_HTTP_PORT=80
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --port) ESP32_PORT="$2"; shift 2 ;;
-    --baud) BAUD="$2";       shift 2 ;;
+    --ip)       ESP32_IP="$2";        shift 2 ;;
+    --esp-port) ESP32_HTTP_PORT="$2"; shift 2 ;;
     *) echo "Option inconnue : $1"; exit 1 ;;
   esac
 done
+
+if [ -z "$ESP32_IP" ]; then
+  echo "Erreur : l'IP de l'ESP32 est requise."
+  echo "Usage : ./deploy.sh --ip <ip-esp32>"
+  echo "L'IP est affichée sur l'écran OLED au démarrage de l'ESP32."
+  exit 1
+fi
 
 # ── Python launcher ───────────────────────────────────────────────────────────
 get_python() {
@@ -45,8 +51,6 @@ terraform apply -auto-approve
 echo ""
 echo "=== Lancement des port-forwards ==="
 
-# Récupère toutes les commandes port-forward depuis les outputs Terraform
-# Chaque output retourne un map { "nom" = "kubectl port-forward svc/... X:Y" }
 FORWARD_CMDS=()
 while IFS= read -r line; do
   [ -n "$line" ] && FORWARD_CMDS+=("$line")
@@ -66,7 +70,6 @@ if [ ${#FORWARD_CMDS[@]} -eq 0 ]; then
   echo "Aucune commande port-forward trouvée dans les outputs Terraform."
 else
   for CMD in "${FORWARD_CMDS[@]}"; do
-    # Extrait un label depuis le nom du service (ex: svc/vps-01-svc → vps-01)
     LABEL=$(echo "$CMD" | grep -oE 'svc/[^ ]+' | sed 's/svc\///' | sed 's/-svc//')
 
     if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -88,18 +91,13 @@ fi
 
 # ── ESP32 ─────────────────────────────────────────────────────────────────────
 echo ""
-echo "=== Envoi du mot de passe SSH sur l'ESP32 ==="
+echo "=== Envoi du mot de passe sur l'ESP32 ($ESP32_IP) ==="
 
-PYTHON_ARGS=("esp32_send_password.py" "--baud" "$BAUD")
-if [ -n "$ESP32_PORT" ]; then
-  PYTHON_ARGS+=("--port" "$ESP32_PORT")
-fi
-
-$PYTHON "${PYTHON_ARGS[@]}"
+$PYTHON esp32_send_password.py --ip "$ESP32_IP" --port "$ESP32_HTTP_PORT"
 
 echo ""
 echo "=== Déploiement terminé ==="
-echo "Le mot de passe SSH est affiché sur l'écran de l'ESP32."
+echo "Le mot de passe est affiché sur l'écran de l'ESP32."
 echo ""
 echo "Connexions SSH disponibles :"
 terraform output -json vps_port_forwards 2>/dev/null \

@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
-    [string]$Port = "",
-    [int]$Baud = 115200
+    [Parameter(Mandatory = $true)]
+    [string]$Ip,
+
+    [int]$EspPort = 80
 )
 
 $ErrorActionPreference = 'Stop'
@@ -24,58 +26,54 @@ function Invoke-NativeCommand {
 
 function Get-PythonLauncher {
     if (Get-Command py -ErrorAction SilentlyContinue) {
-        return @{
-            Command = 'py'
-            Arguments = @('-3')
-        }
+        return @{ Command = 'py'; Arguments = @('-3') }
     }
-
     if (Get-Command python -ErrorAction SilentlyContinue) {
-        return @{
-            Command = 'python'
-            Arguments = @()
-        }
+        return @{ Command = 'python'; Arguments = @() }
     }
-
     if (Get-Command python3 -ErrorAction SilentlyContinue) {
-        return @{
-            Command = 'python3'
-            Arguments = @()
-        }
+        return @{ Command = 'python3'; Arguments = @() }
     }
-
     throw "Aucun interpréteur Python trouvé. Installe Python ou active l'alias 'py'."
 }
 
 function Start-PortForwards {
-    $services = @(
-        @{ Name = 'WP Multisite'; Command = 'kubectl port-forward svc/multisite-svc 8080:80' },
-        @{ Name = 'WordPress';    Command = 'kubectl port-forward svc/wordpress-svc 8081:80' },
-        @{ Name = 'NodeJS';       Command = 'kubectl port-forward svc/nodejs-svc 8082:3000' },
-        @{ Name = 'Debian SSH';   Command = 'kubectl port-forward svc/debian-vps-svc 2222:2222' }
-    )
-
     Write-Host ""
     Write-Host "=== Lancement des port-forwards ===" -ForegroundColor Cyan
 
-    foreach ($service in $services) {
+    $outputNames = @('wordpress_port_forwards', 'multisite_port_forwards', 'nodejs_port_forwards', 'vps_port_forwards')
+    $commands = @()
+
+    foreach ($outputName in $outputNames) {
+        try {
+            $json = terraform output -json $outputName 2>$null | ConvertFrom-Json
+            foreach ($prop in $json.PSObject.Properties) {
+                $cmd   = ($prop.Value -split '#' | Select-Object -First 1).Trim()
+                $commands += @{ Name = $prop.Name; Command = $cmd }
+            }
+        } catch { }
+    }
+
+    if ($commands.Count -eq 0) {
+        Write-Host "Aucune commande port-forward trouvée dans les outputs Terraform." -ForegroundColor Yellow
+        return
+    }
+
+    foreach ($service in $commands) {
         $windowCommand = @"
-Write-Host '=== Port-forward $($service.Name) ===' -ForegroundColor Green
-Write-Host 'Commande: $($service.Command)' -ForegroundColor Yellow
+Write-Host '=== Port-forward : $($service.Name) ===' -ForegroundColor Green
+Write-Host 'Commande : $($service.Command)' -ForegroundColor Yellow
 $($service.Command)
 "@
-
         Start-Process -FilePath powershell -ArgumentList @(
-            '-NoExit',
-            '-ExecutionPolicy', 'Bypass',
-            '-Command',
-            $windowCommand
+            '-NoExit', '-ExecutionPolicy', 'Bypass', '-Command', $windowCommand
         ) | Out-Null
     }
 
-    Write-Host '4 fenêtres de port-forward ont été ouvertes.' -ForegroundColor Green
+    Write-Host "$($commands.Count) fenêtre(s) de port-forward ouvertes." -ForegroundColor Green
 }
 
+# ── Terraform ──────────────────────────────────────────────────────────────────
 Write-Host "=== Initialisation Terraform ===" -ForegroundColor Cyan
 Invoke-NativeCommand -Command 'terraform' -Arguments @('init', '-upgrade')
 
@@ -85,25 +83,25 @@ Invoke-NativeCommand -Command 'terraform' -Arguments @('apply', '-auto-approve')
 
 Start-PortForwards
 
+# ── ESP32 via IP ───────────────────────────────────────────────────────────────
 Write-Host ""
-Write-Host "=== Envoi du mot de passe SSH sur l'ESP32 ===" -ForegroundColor Cyan
+Write-Host "=== Envoi du mot de passe sur l'ESP32 ($Ip) ===" -ForegroundColor Cyan
 
-$python = Get-PythonLauncher
-$pythonArgs = @()
-$pythonArgs += $python.Arguments
-$pythonArgs += 'esp32_send_password.py'
-
-if ($Port) {
-    $pythonArgs += '--port'
-    $pythonArgs += $Port
-}
-
-$pythonArgs += '--baud'
-$pythonArgs += "$Baud"
+$python     = Get-PythonLauncher
+$pythonArgs = $python.Arguments + @('esp32_send_password.py', '--ip', $Ip, '--port', "$EspPort")
 
 Invoke-NativeCommand -Command $python.Command -Arguments $pythonArgs
 
+# ── Résumé ─────────────────────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "=== Déploiement terminé ===" -ForegroundColor Green
-Write-Host "Le mot de passe SSH est affiché sur l'écran de l'ESP32."
-Write-Host "Connexion: ssh admin@localhost -p 2222"
+Write-Host "Le mot de passe est affiché sur l'écran de l'ESP32."
+Write-Host ""
+Write-Host "Connexions SSH disponibles :" -ForegroundColor Cyan
+try {
+    $vpsOutputs = terraform output -json vps_port_forwards 2>$null | ConvertFrom-Json
+    foreach ($prop in $vpsOutputs.PSObject.Properties) {
+        $sshInfo = ($prop.Value -split '#' | Select-Object -Last 1).Trim()
+        Write-Host "  $($prop.Name) -> $sshInfo" -ForegroundColor Yellow
+    }
+} catch { }
